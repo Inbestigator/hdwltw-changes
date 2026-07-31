@@ -1,0 +1,15 @@
+{
+  "name": "hdwltw-changes",
+  "dependencies": {
+    "puppeteer": "^25.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "typescript": "^7.0.2"
+  },
+  "private": true,
+  "scripts": {
+    "build": "bun src/extract && bun src/gallery"
+  },
+  "type": "module"
+}
