@@ -1,5 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { launch } from "puppeteer";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { LaunchOptions, PuppeteerNode } from "puppeteer";
 
 interface AssetsMap {
   [varName: string]: string;
@@ -11,13 +13,49 @@ interface FilesMap {
   other: Record<string, string>;
 }
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+let cachedExecutablePath: string | null = null;
+let downloadPromise: Promise<string> | null = null;
+
+async function getChromiumPath(): Promise<string> {
+  if (cachedExecutablePath) return cachedExecutablePath;
+
+  if (!downloadPromise) {
+    const chromium = (await import("@sparticuz/chromium-min")).default;
+    downloadPromise = chromium
+      .executablePath("https://puppeteer-on-vercel-example.vercel.app/chromium-pack.tar")
+      .then((path) => {
+        cachedExecutablePath = path;
+        console.log("Chromium path resolved:", path);
+        return path;
+      })
+      .catch((error) => {
+        console.error("Failed to get Chromium path:", error);
+        downloadPromise = null;
+        throw error;
+      });
+  }
+
+  return downloadPromise;
+}
+
 async function extractAllAssets(targetUrl: string) {
   console.log(`[1/4] Launching browser and fetching scripts from ${targetUrl}...`);
 
-  const browser = await launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+  let puppeteer: PuppeteerNode;
+  let launchOptions: LaunchOptions = { headless: true };
+
+  if (process.env.VERCEL_ENV) {
+    const chromium = (await import("@sparticuz/chromium-min")).default;
+    puppeteer = (await import("puppeteer-core")) as never;
+    const executablePath = await getChromiumPath();
+    launchOptions = { ...launchOptions, args: chromium.args, executablePath };
+  } else {
+    puppeteer = (await import("puppeteer")) as never;
+  }
+
+  const browser = await puppeteer.launch(launchOptions);
 
   const page = await browser.newPage();
   const scriptContents: { url: string; code: string }[] = [];
