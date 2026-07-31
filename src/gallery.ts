@@ -81,6 +81,11 @@ function generateHTMLGallery(groups: OrganizedGroup[]): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Asset Archive Gallery</title>
+  <meta name="description" content="Assets from howdidwelosethisworld.comm extracted for easy reference" />
+  <meta name="theme-color" content="#0f1117" />
+  <meta property="og:title" content="Asset Archive Gallery" />
+  <meta name="og:description" content="Assets from howdidwelosethisworld.com, extracted for easy reference" />
+  <meta property="og:site_name" content="How Did We Lose This World" />
   <style>
     :root {
       --bg-color: #0f1117;
