@@ -1,14 +1,20 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 
-// Define the structure of the input manifest
 interface AssetManifest {
   [category: string]: {
     [originalPath: string]: string;
   };
 }
 
+interface DiffEntry {
+  date: string;
+  added: Record<string, string>;
+  removed: Record<string, string>;
+}
+
 interface ProcessedMediaItem {
+  id: string;
   originalPath: string;
   filename: string;
   resolvedUrl: string;
@@ -23,6 +29,13 @@ interface OrganizedGroup {
 
 const BASE_URL = "https://howdidwelosethisworld.com";
 
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
 function parseAssetManifest(jsonData: AssetManifest): OrganizedGroup[] {
   const result: OrganizedGroup[] = [];
 
@@ -30,19 +43,15 @@ function parseAssetManifest(jsonData: AssetManifest): OrganizedGroup[] {
     const subGroups: Record<string, ProcessedMediaItem[]> = {};
 
     for (const [originalPath, assetPath] of Object.entries(items)) {
-      // Re-root the path to the target domain
-      // Extracts base asset path e.g. "/assets/t4D5ixdY.webp" -> "https://howdidwelosethisworld.com/assets/t4D5ixdY.webp"
       const cleanAssetPath = assetPath.startsWith("/") ? assetPath : `/${assetPath}`;
       const resolvedUrl = `${BASE_URL}${cleanAssetPath}`;
 
-      // Extract details from original file path
       const pathParts = originalPath.replace(/^\.\//, "").split("/");
       const filename = pathParts[pathParts.length - 1];
       if (!filename) continue;
       const ext = path.extname(filename).toLowerCase();
       const isVideo = ext === ".mp4" || ext === ".webm";
 
-      // Group by subfolder (e.g. "episode-1", "silo-drive", "surveillance")
       let subFolder = "General";
       if (pathParts.length > 2) {
         subFolder = pathParts.slice(1, -1).join(" / ");
@@ -51,7 +60,10 @@ function parseAssetManifest(jsonData: AssetManifest): OrganizedGroup[] {
         subFolder = pathParts[0];
       }
 
+      const id = `media-${slugify(originalPath)}`;
+
       const mediaItem: ProcessedMediaItem = {
+        id,
         originalPath,
         filename,
         resolvedUrl,
@@ -74,14 +86,63 @@ function parseAssetManifest(jsonData: AssetManifest): OrganizedGroup[] {
   return result;
 }
 
-function generateHTMLGallery(groups: OrganizedGroup[]): string {
+function processDiffEntries(
+  diffEntries: DiffEntry[],
+  groups: OrganizedGroup[],
+): ProcessedMediaItem[] {
+  if (!Array.isArray(diffEntries) || diffEntries.length === 0) return [];
+  const latest = diffEntries[diffEntries.length - 1];
+  if (!latest?.added) return [];
+
+  const assetPathToItem = new Map<string, ProcessedMediaItem>();
+  for (const group of groups) {
+    for (const items of Object.values(group.subGroups)) {
+      for (const item of items) {
+        const urlObj = new URL(item.resolvedUrl);
+        assetPathToItem.set(urlObj.pathname, item);
+      }
+    }
+  }
+
+  const items: ProcessedMediaItem[] = [];
+
+  for (const [varName, assetPath] of Object.entries(latest.added)) {
+    const cleanAssetPath = assetPath.startsWith("/") ? assetPath : `/${assetPath}`;
+
+    const matchedItem = assetPathToItem.get(cleanAssetPath);
+    if (matchedItem) {
+      items.push(matchedItem);
+    } else {
+      const resolvedUrl = `${BASE_URL}${cleanAssetPath}`;
+      const filename = path.basename(cleanAssetPath);
+      const ext = path.extname(filename).toLowerCase();
+      const isVideo = ext === ".mp4" || ext === ".webm";
+
+      items.push({
+        id: `media-${slugify(varName)}`,
+        originalPath: `Variable: ${varName}`,
+        filename,
+        resolvedUrl,
+        isVideo,
+        subFolder: "New Additions",
+      });
+    }
+  }
+
+  return items;
+}
+
+function generateHTMLGallery(
+  groups: OrganizedGroup[],
+  recentDiffItems: ProcessedMediaItem[],
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Asset Archive Gallery</title>
-  <meta name="description" content="Assets from howdidwelosethisworld.comm extracted for easy reference" />
+  <meta name="description" content="Assets from howdidwelosethisworld.com extracted for easy reference" />
   <meta name="theme-color" content="#0f1117" />
   <meta property="og:title" content="Asset Archive Gallery" />
   <meta name="og:description" content="Assets from howdidwelosethisworld.com, extracted for easy reference" />
@@ -91,11 +152,13 @@ function generateHTMLGallery(groups: OrganizedGroup[]): string {
       --bg-color: #0f1117;
       --card-bg: #1a1d24;
       --accent: #3b82f6;
+      --diff-accent: #10b981;
       --text: #e2e8f0;
       --text-muted: #94a3b8;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background-color: var(--bg-color);
@@ -126,6 +189,11 @@ function generateHTMLGallery(groups: OrganizedGroup[]): string {
       padding-left: 0.75rem;
     }
 
+    .diff-category-title {
+      color: var(--diff-accent);
+      border-left-color: var(--diff-accent);
+    }
+
     .subfolder-title {
       font-size: 1.1rem;
       color: var(--text-muted);
@@ -145,7 +213,22 @@ function generateHTMLGallery(groups: OrganizedGroup[]): string {
       border-radius: 8px;
       overflow: hidden;
       border: 1px solid #2d3748;
-      transition: transform 0.2s, box-shadow 0.2s;
+      transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    }
+
+    .card:target {
+      border-color: var(--diff-accent);
+      box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+      animation: highlight-pulse 2s ease;
+    }
+
+    @keyframes highlight-pulse {
+      0% { border-color: var(--diff-accent); box-shadow: 0 0 20px rgba(16, 185, 129, 0.8); }
+      100% { border-color: #2d3748; box-shadow: none; }
+    }
+
+    .card.diff-card {
+      border-color: var(--diff-accent);
     }
 
     .card:hover {
@@ -181,6 +264,11 @@ function generateHTMLGallery(groups: OrganizedGroup[]): string {
       font-weight: 600;
     }
 
+    .badge-new {
+      background: var(--diff-accent);
+      color: #000;
+    }
+
     .card-info {
       padding: 0.75rem;
     }
@@ -214,6 +302,40 @@ function generateHTMLGallery(groups: OrganizedGroup[]): string {
   </header>
 
   <main>
+    ${
+      recentDiffItems.length > 0
+        ? `
+      <section class="category">
+        <h2 class="category-title diff-category-title">Recent Changes & Additions</h2>
+        <div class="grid">
+          ${recentDiffItems
+            .map(
+              (item) => `
+            <div class="card diff-card">
+              <a href="#${item.id}" class="media-link">
+                <div class="media-container">
+                  ${
+                    item.isVideo
+                      ? `<video src="${item.resolvedUrl}" preload="metadata"></video><span class="badge badge-new">NEW VIDEO</span>`
+                      : `<img src="${item.resolvedUrl}" alt="${item.filename}" loading="lazy" />`
+                  }
+                  <span class="badge badge-new" style="top: 8px; left: 8px; right: auto;">NEW</span>
+                </div>
+                <div class="card-info">
+                  <div class="filename" title="${item.filename}">${item.filename}</div>
+                  <div class="path" title="Jump to section">Scroll to item &darr;</div>
+                </div>
+              </a>
+            </div>
+          `,
+            )
+            .join("")}
+        </div>
+      </section>
+    `
+        : ""
+    }
+
     ${groups
       .map(
         (group) => `
@@ -227,7 +349,7 @@ function generateHTMLGallery(groups: OrganizedGroup[]): string {
             ${items
               .map(
                 (item) => `
-              <div class="card">
+              <div class="card" id="${item.id}">
                 <a href="${item.resolvedUrl}" target="_blank" class="media-link">
                   <div class="media-container">
                     ${
@@ -259,14 +381,16 @@ function generateHTMLGallery(groups: OrganizedGroup[]): string {
 </html>`;
 }
 
-// Execution block
-const inputData: AssetManifest = /* YOUR JSON OBJECT HERE */ JSON.parse(
-  readFileSync("./dist/files.json", "utf-8"),
-);
+const inputData: AssetManifest = JSON.parse(readFileSync("./dist/files.json", "utf-8"));
+
+let diffEntries: DiffEntry[] = [];
+try {
+  diffEntries = JSON.parse(readFileSync("./dist/diffs/files.json", "utf-8"));
+} catch {}
 
 const parsedData = parseAssetManifest(inputData);
-const htmlContent = generateHTMLGallery(parsedData);
+const recentDiffItems = processDiffEntries(diffEntries, parsedData);
+const htmlContent = generateHTMLGallery(parsedData, recentDiffItems);
 
-// Save output
 writeFileSync("./dist/index.html", htmlContent, "utf-8");
 console.log("Gallery generated successfully at index.html");

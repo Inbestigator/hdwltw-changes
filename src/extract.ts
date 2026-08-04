@@ -114,11 +114,7 @@ async function extractAllAssets(targetUrl: string) {
   );
 
   const assetsJson: AssetsMap = {};
-  const filesJson: FilesMap = {
-    modern: {},
-    retro: {},
-    other: {},
-  };
+  const filesJson: FilesMap = { modern: {}, retro: {}, other: {} };
 
   const varAssetRegex = /(?:const|let|var|,|\b)([a-zA-Z0-9_$]+)\s*=\s*["'](\/assets\/[^"']+)["']/g;
   for (const script of scriptContents) {
